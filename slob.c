@@ -94,7 +94,6 @@ typedef struct slob_block slob_t;
 size_t claimsize[100] ;
 size_t freesize[100] ;
 int i = 0 ;
-int full = 0 ;
 
 /*
  * We use struct page fields to manage some slob allocation aspects,
@@ -269,74 +268,73 @@ static void slob_free_pages(void *b, int order)
 	free_pages((unsigned long)b, order);
 }
 
-/*
- * Allocate a slob block within a given slob_page sp.
- */
 static void *slob_page_alloc(struct slob_page *sp, size_t size, int align)
 {
 	slob_t *prev, *cur, *aligned = NULL;
 	int delta = 0, units = SLOB_UNITS(size);
-
-	slob_t *best_prev = NULL, *best_cur = NULL ;
-	slobidx_t best_fit = 0 ;
-
-	for (prev = NULL, cur = sp->free; ; prev = cur, cur = slob_next(cur)) {
+	
+	slob_t *best_prev = NULL, *best_cur = NULL, *best_aligned = NULL;
+	int best_delta = 0;
+	slobidx_t best_fit = 0;
+	
+	for (prev = NULL, cur = sp->free; ; prev = cur, cur = slob_next(cur)) 
+	{
 		slobidx_t avail = slob_units(cur);
-
+	
 		if (align) {
-			aligned = (slob_t *)ALIGN((unsigned long)cur, align);
-			delta = aligned - cur;
+		aligned = (slob_t *)ALIGN((unsigned long)cur, align);
+		delta = aligned - cur;
 		}
 	
-		// first entry or better block found
-		if (avail >= units + delta && (best_cur == NULL || avail - (units + delta) < best_fit)) 
-		{	
-			best_prev = prev ;
-			best_cur = cur ;
-			best_fit = avail - (units + delta) ;
-		}
-
-		if (slob_last(cur))
+		if (avail >= units + delta && (best_cur == NULL || avail - (units + delta) < best_fit) ) 
 		{
-      if (best_cur != NULL)
-      {
-			  slob_t *next = NULL;
-			  prev = best_prev ;
-			  cur = best_cur ;
-        avail = slob_units(cur);
-
-			  if (delta) { /* need to fragment head to align? */
-				  next = slob_next(cur);
-				  set_slob(aligned, avail - delta, next);
-				  set_slob(cur, delta, aligned);
-				  prev = cur;
-				  cur = aligned;
-				  avail = slob_units(cur);
-			  }
-
-			  next = slob_next(cur);
-			  if (avail == units) { /* exact fit? unlink. */
-				  if (prev)
-					  set_slob(prev, slob_units(prev), next);
-				  else
-					  sp->free = next;
-			  } else { /* fragment */
-				  if (prev)
-					  set_slob(prev, slob_units(prev), cur + units);
-				  else
-					  sp->free = cur + units;
-				  set_slob(cur + units, avail - units, next);
-			  }
-
-			  sp->units -= units;
-			  if (!sp->units)
-				  clear_slob_page_free(sp);
-			  return cur;
-      }
-
-      return NULL ;
+			best_prev = prev;
+			best_cur = cur;
+			best_aligned = aligned;
+			best_delta = delta;
+			best_fit = avail - (units + delta);
 		}
 
+		if (slob_last(cur)) 
+		{
+			if (best_cur != NULL) 
+			{
+				slob_t *best_next = NULL;
+				slobidx_t best_avail = slob_units(best_cur);
+	
+				if (best_delta) { /* need to fragment head to align? */
+					best_next = slob_next(best_cur);
+					set_slob(best_aligned, best_avail - best_delta, best_next);
+					set_slob(best_cur, best_delta, best_aligned);
+					best_prev = best_cur;
+					best_cur = best_aligned;
+					best_avail = slob_units(best_cur);
+				}
+	
+				best_next = slob_next(best_cur);
+
+				if (best_avail == units) 
+				{
+					if (best_prev)
+						set_slob(best_prev, slob_units(best_prev), best_next);
+					else
+						sp->free = best_next;
+					} else { /* fragment */
+						if (best_prev)
+							set_slob(best_prev, slob_units(best_prev), best_cur + units);
+						else
+							sp->free = best_cur + units;
+						set_slob(best_cur + units, best_avail - units, best_next);
+				}
+	
+				sp->units -= units;
+				if (!sp->units)
+					clear_slob_page_free(sp);
+				return best_cur;
+			}
+	
+			return NULL;
+		}
 	}
 }
 
@@ -367,9 +365,6 @@ static int best_fit_check(struct slob_page *sp, size_t size, int align)
 	}
 }
 
-/*
- * slob_alloc: entry point into the slob allocator.
- */
 static void *slob_alloc(size_t size, gfp_t gfp, int align, int node)
 {
 	struct slob_page *sp;
@@ -428,20 +423,8 @@ static void *slob_alloc(size_t size, gfp_t gfp, int align, int node)
 
 	if (best_fit >= 0)
 	{
-    //prev = best->list.prev ;
-		/* Attempt to alloc */
-		b = slob_page_alloc(best, size, align);
-  
-    /* Improve fragment distribution and reduce our average
-		 * search time by starting our next search here. (see
-		 * Knuth vol 1, sec 2.5, pg 449) */
 
-		/*if (b)
-		{
-		  if (prev != slob_list->prev &&
-				  slob_list->next != prev->next)
-			  list_move_tail(slob_list, prev->next);
-    }*/
+		b = slob_page_alloc(best, size, align);
 	}
 
 	spin_unlock_irqrestore(&slob_lock, flags);
@@ -475,6 +458,7 @@ static void *slob_alloc(size_t size, gfp_t gfp, int align, int node)
 		memset(b, 0, size);
 	return b;
 }
+
 
 /*
  * slob_free: entry point into the slob allocator.
@@ -790,37 +774,23 @@ void __init kmem_cache_init_late(void)
 asmlinkage long sys_get_slob_amt_claimed(void)
 {
 	int j ;
-	int x ;
+	
 	size_t avg = 0 ;
 
-	if (full) x = 99 ;
-	else x = i ;
-
-	if (x ==0) printk("NO FRAGMENTATION\n") ;
-	else
-	{
-		for( j=0; j <= x; j++) avg += claimsize[j] ;
-		avg = avg / x ;
+		for( j=0; j <= 99; j++) avg += claimsize[j] ;
+		avg = avg / 100 ;
 		printk("Average claimed amount %zu\n", avg) ;
-	}
+	
 	return 0 ;	
 }
 
 asmlinkage long sys_get_slob_amt_free(void)
 {
 	int j ;
-	int x ;
 	size_t avg = 0 ;
 
-	if (full) x = 99 ;
-	else x = i ;
-
-	if (x ==0) printk("NO FRAGMENTATION\n") ;
-	else
-	{
-		for( j=0; j <= x; j++) avg += freesize[j] ;
-		avg = avg / x ;
+		for( j=0; j <= 99; j++) avg += freesize[j] ;
+		avg = avg / 100 ;
 		printk("Average free amount for %zu\n", avg) ;
-	}
 	return 0 ;	
 }
