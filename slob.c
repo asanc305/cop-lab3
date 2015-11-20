@@ -91,6 +91,7 @@ struct slob_block {
 };
 typedef struct slob_block slob_t;
 
+//lists to track memory 
 long claimsize[100] ;
 long freesize[100] ;
 int i = 0 ;
@@ -268,15 +269,21 @@ static void slob_free_pages(void *b, int order)
 	free_pages((unsigned long)b, order);
 }
 
+/*
+ * Iterates through all the free blocks on the page while keeping track of the 
+ * block with the best fit. Then remove that block from the free list and return it. 
+ */
 static void *slob_page_alloc(struct slob_page *sp, size_t size, int align)
 {
 	slob_t *prev, *cur, *aligned = NULL;
 	int delta = 0, units = SLOB_UNITS(size);
 	
+  //variables to track the best fit block and save the state when found
 	slob_t *best_prev = NULL, *best_cur = NULL, *best_aligned = NULL;
 	int best_delta = 0;
 	slobidx_t best_fit = 0;
 	
+  //iterate through blocks
 	for (prev = NULL, cur = sp->free; ; prev = cur, cur = slob_next(cur)) 
 	{
 		slobidx_t avail = slob_units(cur);
@@ -286,9 +293,10 @@ static void *slob_page_alloc(struct slob_page *sp, size_t size, int align)
 		delta = aligned - cur;
 		}
 	
+		//best fit block found
 		if (avail >= units + delta && (best_cur == NULL || avail - (units + delta) < best_fit) ) 
 		{
-      //save pointers when best found
+      //save state
 			best_prev = prev;
 			best_cur = cur;
 			best_aligned = aligned;
@@ -300,7 +308,7 @@ static void *slob_page_alloc(struct slob_page *sp, size_t size, int align)
 		{
 			if (best_cur != NULL) 
 			{
-        //revert pointers for allocation
+        //revert state
 				slob_t *next;
         prev = best_prev ;
         cur = best_cur ;
@@ -342,6 +350,11 @@ static void *slob_page_alloc(struct slob_page *sp, size_t size, int align)
 	}
 }
 
+/*
+ * Iterates through the list of free blocks on the given page while keeping
+ * track of the best fit block. Then returns the amount of space that would 
+ * be left on that block if it were to be allocated.
+ */
 static int best_fit_check(struct slob_page *sp, size_t size, int align)
 {
 	slob_t *prev, *cur, *aligned = NULL ;
@@ -363,12 +376,18 @@ static int best_fit_check(struct slob_page *sp, size_t size, int align)
 		if (avail >= units + delta && (best_fit == -1 || avail - (units + delta) < best_fit)) 
 			best_fit = avail - (units + delta) ;
 		
+		//perfect fit
 		if (best_fit == 0) return 0 ;
 
 		if (slob_last(cur)) return best_fit ;
 	}
 }
 
+/*
+ * Iterates through the list of pages while checking each page for the 
+ * best fit. If a page is found then it will attempt allocate on that page,
+ * otherwise it will allocate a new page.
+ */
 static void *slob_alloc(size_t size, gfp_t gfp, int align, int node)
 {
 	struct slob_page *sp;
@@ -376,6 +395,7 @@ static void *slob_alloc(size_t size, gfp_t gfp, int align, int node)
 	slob_t *b = NULL;
 	unsigned long flags;
 	
+
 	struct slob_page *best = NULL ;
 	int temp = -1 ;
 	slobidx_t best_fit = -1;
@@ -412,7 +432,7 @@ static void *slob_alloc(size_t size, gfp_t gfp, int align, int node)
 		temp = best_fit_check(sp, size, align) ;
 		
     //update best fit
-		if (temp == 0)
+		if (temp == 0)	
 		{
 			best = sp ;
 			best_fit = 0 ;
@@ -435,6 +455,8 @@ static void *slob_alloc(size_t size, gfp_t gfp, int align, int node)
 
 	/* Not enough space: must allocate a new page */
 	if (!b) {
+
+		// update the tracking list
 		if (size < SLOB_BREAK1)	
 		{
 			claimsize[i] = size ;
@@ -775,26 +797,24 @@ void __init kmem_cache_init_late(void)
 	/* Nothing to do */
 }
 
+//system call to return avg amount claimed
 asmlinkage long sys_get_slob_amt_claimed(void)
 {
 	int j ;
 	long avg = 0 ;
 
 	for( j=0; j <= 99; j++) avg += claimsize[j] ;
-	avg = avg / 100 ;
-	printk("Average claimed amount %ld\n", avg) ;
-	
-	return 0 ;	
+	return avg / 100 ;
+
 }
 
+//system call to return avg amount free
 asmlinkage long sys_get_slob_amt_free(void)
 {
 	int j ;
 	long avg = 0 ;
 
 	for( j=0; j <= 99; j++) avg += freesize[j] ;
-	avg = avg / 100 ;
-	printk("Average free amount %ld\n", avg) ;
-
-	return 0 ;	
+	return avg / 100 ;
+		
 }
