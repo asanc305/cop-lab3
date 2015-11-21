@@ -1,4 +1,21 @@
 /*
+ * GROUP MEMBERS:
+ * Alex Sanchez
+ * Ike Ukachi-Lois
+ *
+ * PROGRAM DESCRIPTION:
+ * In this program, We modified slob.c that implements the first fit allocation 
+ * algorithm and have changed and added a few functions and variables 
+ * (including slob_page_alloc, best_fit_check,slob_alloc and variables claimsize and freesize)
+ * in order to implement the best fit algorithm. Two system calls have been added to the end of 
+ * the file to test the results of the new algorithm we have implemented.
+ *
+ * SOURCES CITED:
+ * Oleson, Mark. "COP4610" Fusion2004 Repository. 12 Dec. 2011. Web. 21 Nov. 2015.
+ */
+
+
+/*
  * SLOB Allocator: Simple List Of Blocks
  *
  * Matt Mackall <mpm@selenic.com> 12/30/03
